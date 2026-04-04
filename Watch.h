@@ -1,4 +1,7 @@
 ﻿#pragma once
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include<winsock2.h>//应先于windows.h
 #include<ws2tcpip.h>
 #include<Windows.h>
@@ -50,6 +53,16 @@ enum MESSAGE_TYPE
 	Video=0,Command=1
 };
 
+struct NetFrameMessage
+{
+	MESSAGE_TYPE mt;
+	size_t dataSize;
+	uint8_t* data;
+};
+
+extern HANDLE g_ReadyEvent;
+extern HANDLE g_PlayEndedEvent;
+
 class ClientViewCatch
 {
 private:
@@ -97,9 +110,48 @@ public:
 	static DWORD WINAPI CaptureThread(LPVOID lpParam);
 };
 
+class HostViewDisplay
+{
+private:
+	int targetframe;
+	double framerate;
+	vector<Color_RGB> ViewData;
+	int ViewWidth;
+	int ViewHeight;
+
+	AVIOContext* ioctx;
+	AVFormatContext* fmtctx;
+	int VideoStreamIndex;
+	AVCodecContext* c;
+	AVFrame* frame;
+	bdata bd;
+	AVPacket* pkt;
+	SwsContext* sws_ctx;
+
+public:
+	uint8_t* lpMemVideoFile;
+	HostViewDisplay();
+	~HostViewDisplay();
+	BOOL Initialize();
+	BOOL RequestFrame();
+	BOOL GetFrameData();
+	BOOL OnScreenDisplay(HDC hdc);
+	double GetFrameRate();
+
+	static int read_packet(void* opaque, uint8_t* buf, int buf_size);
+	static int64_t seek(void* opaque, int64_t offset, int whence);
+};
+
 class NetworkModule
 {
+private:
+	addrinfo* result = nullptr, * ptr = nullptr, hints;
+	sockaddr_in serverAddr;
+	WSADATA wsaData;
+	SOCKET Listensock = INVALID_SOCKET, Connectsock = INVALID_SOCKET;
+	NetFrameMessage msg;
 public:
-	bool SendNetFrameMessage(IDENTITY id,MESSAGE_TYPE mt,LPVOID lpData);
-	bool RecvNetFrameMessage(IDENTITY id, MESSAGE_TYPE mt, LPVOID lpData);
+	NetworkModule(IDENTITY id);
+	bool SendNetFrameMessage(MESSAGE_TYPE mt,LPVOID lpData);
+	bool RecvNetFrameMessage(MESSAGE_TYPE mt, LPVOID lpData);
 };

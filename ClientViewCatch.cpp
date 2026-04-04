@@ -1,4 +1,4 @@
-#include "Wacth.h"
+#include "Watch.h"
 
 //ClientViewCatch类的实现
 ClientViewCatch::ClientViewCatch()
@@ -39,9 +39,12 @@ ClientViewCatch::~ClientViewCatch()
 		avio_context_free(&ioctx);
 	if (fmtctx)
 		avformat_free_context(fmtctx);
-	if (hBmp) DeleteObject(hBmp);
-	if (hdc) DeleteDC(hdc);
-	if (lpMemVideoFile) VirtualFree(lpMemVideoFile, 0, MEM_RELEASE);
+	if (hBmp) 
+		DeleteObject(hBmp);
+	if (hdc)
+		DeleteDC(hdc);
+	if (lpMemVideoFile)
+		VirtualFree(lpMemVideoFile, 0, MEM_RELEASE);
 };
 
 
@@ -86,9 +89,9 @@ bool ClientViewCatch::Initialize()
 	c->max_b_frames = 1;
 	c->pix_fmt = AV_PIX_FMT_YUV420P;
 	int ret = av_opt_set(c->priv_data, "preset", "fast", 0);
-	if (ret < 0) {
+	if (ret < 0) 
 		return false;
-	}
+	
 
 	ret=avcodec_open2(c, codec, NULL);
 	if (ret<0)
@@ -240,10 +243,11 @@ DWORD WINAPI ClientViewCatch::CaptureThread(LPVOID lpParam)
 		for (int f = 0; f < 30; f++) 
 		{
 			pThis->OnScreenShots();      // 捕获一帧
-			Sleep(pThis->framerate);       // 控制帧率，实际应该用更精确的计时
+			Sleep(pThis->framerate * 1000);       // 控制帧率，实际应该用更精确的计时
 		}
 		pThis->EncodeSomeFramesAndMuxing();  // 编码这一秒
 		pThis->FlushAndWriteTrailer();          // 完成
+		SetEvent(g_ReadyEvent);
 	}
 	return 0;
 }
