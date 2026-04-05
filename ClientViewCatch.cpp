@@ -1,4 +1,4 @@
-#include "Watch.h"
+﻿#include "Watch.h"
 
 //ClientViewCatch类的实现
 ClientViewCatch::ClientViewCatch()
@@ -50,35 +50,52 @@ ClientViewCatch::~ClientViewCatch()
 
 bool ClientViewCatch::Initialize()
 {
-    DIBDatas.resize(targetframe);
-    for (size_t i = 0; i < targetframe; i++)
-    {
-        DIBDatas[i].resize(BmpInfo.biWidth*BmpInfo.biHeight);
-    }    
+   // 默认捕获参数
 	targetframe = 30;	//默认捕获30帧,暂时规定，后续提供接口修改
-    framerate = 1 / targetframe;
+	framerate = 1.0 / targetframe;
+
+	DIBDatas.resize(targetframe);
+	for (size_t i = 0; i < targetframe; i++)
+	{
+		DIBDatas[i].resize(BmpInfo.biWidth * BmpInfo.biHeight);
+	}
 	hdc = CreateDC(TEXT("DISPLAY"), NULL, NULL, NULL);
 	hBmp = CreateCompatibleBitmap(hdc, BmpInfo.biWidth, BmpInfo.biHeight);
 
 	//FFmpeg库的初始化
 	//初始化封装容器
-	bd.size = BmpInfo.biWidth * BmpInfo.biHeight * 5 * targetframe * sizeof(Color_RGB);//这里的计算原理是：每帧的大小为宽*高*3字节（24位色），每秒30帧，那么总大小就是宽*高*3*targetframe
+    // 每帧为 width*height*sizeof(Color_RGB)，总大小乘以 targetframe
+	bd.size = (size_t)BmpInfo.biWidth * BmpInfo.biHeight * targetframe * sizeof(Color_RGB);
 	lpMemVideoFile = (uint8_t*)VirtualAlloc(NULL, bd.size, MEM_COMMIT, PAGE_READWRITE);
+	if (!lpMemVideoFile) 
+		return false;
 	bd.buf = lpMemVideoFile;
 	bd.pos = 0;
-	avformat_alloc_output_context2(&fmtctx, NULL, "mp4", NULL);
+
+	if (avformat_alloc_output_context2(&fmtctx, NULL, "mp4", NULL) < 0 || !fmtctx)
+		return false;
+	
 	ofmt = fmtctx->oformat;
 	auto avio_buffer = av_malloc(4096);
+	if (!avio_buffer)
+		return false;
 	ioctx = avio_alloc_context((unsigned char*)avio_buffer, 4096, 1, &bd, NULL, &write_packet, &seek);
+	if (!ioctx)
+		return false;
 	fmtctx->pb = ioctx;
 
 	st = avformat_new_stream(fmtctx, NULL);
 	st->id = fmtctx->nb_streams - 1;
 
-	const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-	codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+	if (!codec) 
+		return false;
 	c = avcodec_alloc_context3(codec);
+	if (!c) 
+		return false;
 	pkt = av_packet_alloc();
+	if (!pkt)
+		return false;
 
 	c->bit_rate = 400000;
 	c->width = BmpInfo.biWidth;
@@ -88,26 +105,28 @@ bool ClientViewCatch::Initialize()
 	c->gop_size = 10;
 	c->max_b_frames = 1;
 	c->pix_fmt = AV_PIX_FMT_YUV420P;
-	int ret = av_opt_set(c->priv_data, "preset", "fast", 0);
+    int ret = av_opt_set(c->priv_data, "preset", "fast", 0);
+	if (ret < 0)
+		return false;
+
+	ret = avcodec_open2(c, codec, NULL);
 	if (ret < 0) 
 		return false;
-	
 
-	ret=avcodec_open2(c, codec, NULL);
-	if (ret<0)
-		return false;
-
-	sws_ctx = sws_getContext(BmpInfo.biWidth, BmpInfo.biHeight, AV_PIX_FMT_BGR24, BmpInfo.biWidth, BmpInfo.biHeight, AV_PIX_FMT_YUV420P,
+    sws_ctx = sws_getContext(BmpInfo.biWidth, BmpInfo.biHeight, AV_PIX_FMT_BGR24, BmpInfo.biWidth, BmpInfo.biHeight, AV_PIX_FMT_YUV420P,
 		SWS_FAST_BILINEAR, NULL, NULL, NULL);
-	if (!sws_ctx)
+	if (!sws_ctx) 
 		return false;
 
-	frame = av_frame_alloc();
+    frame = av_frame_alloc();
+	if (!frame) return false;
 	frame->format = c->pix_fmt;
 	frame->width = c->width;
 	frame->height = c->height;
-	av_frame_get_buffer(frame, 0);
-	av_frame_make_writable(frame);
+	if (av_frame_get_buffer(frame, 0) < 0)
+		return false;
+	if (av_frame_make_writable(frame) < 0) 
+		return false;
 
 	avcodec_parameters_from_context(st->codecpar, c);
 	return true;
@@ -269,4 +288,14 @@ VOID ClientViewCatch::StartStopCapture()
 		hCaptureEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
 		hThread = CreateThread(NULL, 0, CaptureThread, this, 0, NULL);
 	}
+}
+
+BITMAPINFO* ClientViewCatch::GetBmpInfo()
+{
+	return (BITMAPINFO*)&BmpInfo;
+}
+
+size_t ClientViewCatch::GetMemVideoFileSize()
+{
+    return bd.pos; // return current written size of the in-memory video buffer
 }

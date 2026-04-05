@@ -133,6 +133,11 @@
   <ItemGroup>
     <ClCompile Include="Cilent.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Watch.vcxproj">
+      <Project>{1ab1dd3a-3742-4fd4-92a0-88969e02b006}</Project>
+    </ProjectReference>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

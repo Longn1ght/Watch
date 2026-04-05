@@ -24,6 +24,7 @@ extern "C" {
 #pragma comment(lib,"avcodec.lib")
 #pragma comment(lib,"avformat.lib")
 #pragma comment(lib,"avutil.lib")
+#pragma comment(lib,"swscale.lib")
 
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
@@ -50,7 +51,7 @@ enum IDENTITY
 
 enum MESSAGE_TYPE
 {
-	Video=0,Command=1
+	Video = 0, Command = 1, Info = 2
 };
 
 struct NetFrameMessage
@@ -62,6 +63,7 @@ struct NetFrameMessage
 
 extern HANDLE g_ReadyEvent;
 extern HANDLE g_PlayEndedEvent;
+extern HANDLE g_GotVideoInfoEvent;
 
 class ClientViewCatch
 {
@@ -100,6 +102,8 @@ public:
 	bool EncodeSomeFramesAndMuxing();
 	bool FlushAndWriteTrailer();
 	//后续可能会加入hdc更换、目标帧率修改之类的
+	BITMAPINFO* GetBmpInfo();
+    size_t GetMemVideoFileSize();
 
 	VOID StartStopCapture();
 
@@ -115,9 +119,10 @@ class HostViewDisplay
 private:
 	int targetframe;
 	double framerate;
-	vector<Color_RGB> ViewData;
+	vector<uint8_t> ViewData;
 	int ViewWidth;
 	int ViewHeight;
+	BITMAPINFOHEADER BmpInfo;
 
 	AVIOContext* ioctx;
 	AVFormatContext* fmtctx;
@@ -138,6 +143,8 @@ public:
 	BOOL OnScreenDisplay(HDC hdc);
 	double GetFrameRate();
 
+	void SetVideoBuffer(uint8_t* buf, size_t size);
+
 	static int read_packet(void* opaque, uint8_t* buf, int buf_size);
 	static int64_t seek(void* opaque, int64_t offset, int whence);
 };
@@ -152,6 +159,6 @@ private:
 	NetFrameMessage msg;
 public:
 	NetworkModule(IDENTITY id);
-	bool SendNetFrameMessage(MESSAGE_TYPE mt,LPVOID lpData);
+	bool SendNetFrameMessage(MESSAGE_TYPE mt, LPVOID lpData, size_t dataSize);
 	bool RecvNetFrameMessage(MESSAGE_TYPE mt, LPVOID lpData);
 };

@@ -1,6 +1,5 @@
 #include"../Watch.h"
 
-HANDLE g_ReadyEvent;
 DWORD WINAPI NetworkThread(LPVOID lpParam);
 int main()
 {
@@ -12,7 +11,7 @@ int main()
 		return -1;
 	}
 	CreateThread(NULL, 0, ClientViewCatch::CaptureThread, &cvc, 0, NULL);
-	CreateThread(NULL, 0, NetworkThread, cvc.lpMemVideoFile, 0, NULL);
+	CreateThread(NULL, 0, NetworkThread, &cvc, 0, NULL);
 	cvc.StartStopCapture();
 	while (true)
 	{
@@ -24,12 +23,18 @@ int main()
 
 DWORD WINAPI NetworkThread(LPVOID lpParam)
 {
-	uint8_t* lpData = static_cast<uint8_t*>(lpParam);
-	NetworkModule nm(IDENTITY::CLIENT);
+	static ClientViewCatch* cvc = static_cast<ClientViewCatch*>(lpParam);
+	static NetworkModule nm(IDENTITY::CLIENT);
+	//首次需要发送视频信息，后续只发送视频数据
+	if (!nm.SendNetFrameMessage(Info, cvc->GetBmpInfo()))
+	{
+		MessageBox(nullptr, L"发送数据失败！", L"错误", MB_OK | MB_ICONERROR);
+		return -1;
+	}
 	while (true)
 	{
 		WaitForSingleObject(g_ReadyEvent, INFINITE); // 等待捕获事件
-		if (!nm.SendNetFrameMessage(MESSAGE_TYPE::Video, lpData))
+		if (!nm.SendNetFrameMessage(MESSAGE_TYPE::Video, cvc->lpMemVideoFile))
 		{
 			MessageBox(nullptr, L"发送数据失败！", L"错误", MB_OK | MB_ICONERROR);
 			break;

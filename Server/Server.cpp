@@ -1,14 +1,13 @@
-#include"../Watch.h"
+﻿#include"../Watch.h"
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
-INT_PTR CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 DWORD WINAPI NetworkThread(LPVOID lpParam);
-
-HANDLE g_PlayEndedEvent;
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
 	g_PlayEndedEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+	g_GotVideoInfoEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
 	MSG msg;
 	WNDCLASSEX wndclassex;
 	wndclassex.cbSize = sizeof(WNDCLASSEX);
@@ -43,20 +42,37 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	return 0;
 }
 
-INT_PTR CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	HostViewDisplay hvd;
+	static HostViewDisplay hvd;
 	switch (msg)
 	{
 	case WM_CREATE:
-		SetTimer(hwnd, 1, hvd.GetFrameRate() * 1000, NULL);;// 创建一个定时器，每秒触发一次
-		CreateThread(NULL, 0, NetworkThread, hvd.lpMemVideoFile, 0, NULL); // 创建网络线程
+		CreateThread(NULL, 0, NetworkThread, &hvd, 0, NULL); // 创建网络线程
+		WaitForSingleObject(g_GotVideoInfoEvent, INFINITE); // 等待获取视频信息事件
+		hvd.Initialize(); // 初始化HostViewDisplay
+		SetTimer(hwnd, 1, hvd.GetFrameRate() * 1000, NULL);// 创建一个定时器，每秒触发一次
 		break;
 	case WM_TIMER:
-		hvd.RequestFrame(); // 请求新的一帧数据
+        hvd.RequestFrame(); // 请求新的一帧数据
 		hvd.GetFrameData(); // 获取帧数据
-		hvd.OnScreenDisplay(GetDC(hwnd)); // 在窗口上显示画面
+		{
+			HDC hdc = GetDC(hwnd);
+			if (hdc)
+			{
+				hvd.OnScreenDisplay(hdc); // 在窗口上显示画面
+				ReleaseDC(hwnd, hdc);
+			}
+		}
 		break;
+	case WM_PAINT:
+	{
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hwnd, &ps);
+		hvd.OnScreenDisplay(hdc); // 在窗口上显示画面
+		EndPaint(hwnd, &ps);
+	}
+        break;
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;
@@ -68,12 +84,42 @@ INT_PTR CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 DWORD WINAPI NetworkThread(LPVOID lpParam)
 {
-	uint8_t* lpData = static_cast<uint8_t*>(lpParam);
-	NetworkModule nm(IDENTITY::HOST);
+	HostViewDisplay* pHvd = static_cast<HostViewDisplay*>(lpParam);
+	if (!pHvd) return -1;
+
+    NetworkModule nm(IDENTITY::HOST);
+
+	BITMAPINFOHEADER header = {0};
+	if (!nm.RecvNetFrameMessage(MESSAGE_TYPE::Info, &header))
+	{
+		MessageBox(nullptr, L"接收数据失败！", L"错误", MB_OK | MB_ICONERROR);
+		return -1;
+	}
+
+	const int serverTargetFrame = 30;
+	size_t expectedSize = (size_t)header.biWidth * header.biHeight * serverTargetFrame * sizeof(Color_RGB);
+	uint8_t* videoBuf = (uint8_t*)VirtualAlloc(NULL, expectedSize, MEM_COMMIT, PAGE_READWRITE);
+	if (!videoBuf) 
+	{
+		MessageBox(nullptr, L"内存分配失败！", L"错误", MB_OK | MB_ICONERROR);
+		return -1;
+	}
+	memcpy(videoBuf, &header, sizeof(header));
+
+	if (!nm.RecvNetFrameMessage(MESSAGE_TYPE::Video, videoBuf + sizeof(header)))
+	{
+		MessageBox(nullptr, L"接收数据失败！", L"错误", MB_OK | MB_ICONERROR);
+		VirtualFree(videoBuf, 0, MEM_RELEASE);
+		return -1;
+	}
+
+	pHvd->SetVideoBuffer(videoBuf, expectedSize);
+	SetEvent(g_GotVideoInfoEvent); // 触发获取视频信息事件
+
 	while (true)
 	{
-		WaitForSingleObject(g_PlayEndedEvent, INFINITE); 
-		if (!nm.RecvNetFrameMessage(MESSAGE_TYPE::Video, lpData))
+		WaitForSingleObject(g_PlayEndedEvent, INFINITE);
+		if (!nm.RecvNetFrameMessage(MESSAGE_TYPE::Video, pHvd->lpMemVideoFile + sizeof(BITMAPINFOHEADER)))
 		{
 			MessageBox(nullptr, L"接收数据失败！", L"错误", MB_OK | MB_ICONERROR);
 			break;

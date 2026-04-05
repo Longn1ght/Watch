@@ -1,4 +1,4 @@
-#include"Watch.h"
+﻿#include "Watch.h"
 
 HostViewDisplay::HostViewDisplay()
 {
@@ -8,6 +8,20 @@ HostViewDisplay::HostViewDisplay()
 	frame = nullptr;
 	pkt = nullptr;
 	sws_ctx = nullptr;
+	lpMemVideoFile = (uint8_t*)VirtualAlloc(NULL, sizeof(BITMAPINFOHEADER), MEM_COMMIT, PAGE_READWRITE);
+}
+
+void HostViewDisplay::SetVideoBuffer(uint8_t* buf, size_t size)
+{
+	// Replace owned buffer safely
+	if (lpMemVideoFile)
+	{
+		VirtualFree(lpMemVideoFile, 0, MEM_RELEASE);
+	}
+	lpMemVideoFile = buf;
+	bd.buf = lpMemVideoFile;
+	bd.size = size;
+	bd.pos = 0;
 }
 
 HostViewDisplay::~HostViewDisplay()
@@ -31,26 +45,47 @@ HostViewDisplay::~HostViewDisplay()
 BOOL HostViewDisplay::Initialize()
 {
 	targetframe = 30;	//默认播放30帧,暂时规定，后续提供接口修改
-	framerate = 1 / targetframe;
+    framerate = 1.0 / targetframe;
 	ViewWidth = 1280;
 	ViewHeight = 720;
 	//后续开放接口修改分辨率
-	ViewData.resize(ViewWidth * ViewHeight);
+    ViewData.resize(ViewWidth * ViewHeight * 3); // 24bpp -> 3 bytes per pixel
+	if (!lpMemVideoFile) return FALSE; // 空检查
 
-	bd.size = BmpInfo.biWidth * BmpInfo.biHeight * 5 * targetframe * sizeof(Color_RGB);//这里的计算原理是：每帧的大小为宽*高*3字节（24位色），每秒30帧，那么总大小就是宽*高*3*targetframe
-	lpMemVideoFile = (uint8_t*)VirtualAlloc(NULL, bd.size, MEM_COMMIT, PAGE_READWRITE);
-	bd.buf = lpMemVideoFile;
-	bd.pos = 0;
-	avformat_open_input(&fmtctx, NULL, NULL, NULL);
-	auto avio_buffer = av_malloc(4096);
-	ioctx = avio_alloc_context((unsigned char*)avio_buffer, 4096, 1, &bd, NULL, &write_packet, &seek);
-	fmtctx->pb = ioctx;
+    // 读取位图头信息（确保网络线程已填充并设置事件）
+    BmpInfo = *reinterpret_cast<BITMAPINFOHEADER*>(lpMemVideoFile);
+    // 每帧为 width * height * sizeof(Color_RGB) 字节（Color_RGB == 3 bytes），总大小乘以每秒帧数 targetframe
+	bd.size = (size_t)BmpInfo.biWidth * BmpInfo.biHeight * targetframe * sizeof(Color_RGB);
 
+    // 重新分配视频缓冲区前停止网络对旧缓冲区的写入（或等到 NetworkThread 完成）
+    VirtualFree(lpMemVideoFile, 0, MEM_RELEASE);
+    lpMemVideoFile = (uint8_t*)VirtualAlloc(NULL, bd.size, MEM_COMMIT, PAGE_READWRITE);
+    if (!lpMemVideoFile) return FALSE;
+    bd.buf = lpMemVideoFile;
+    bd.pos = 0;
+
+    // --- 关键：先创建 AVFormatContext 和 AVIOContext ---
+    fmtctx = avformat_alloc_context();
+    if (!fmtctx) return FALSE;
+
+    unsigned char* avio_buffer = (unsigned char*)av_malloc(4096);
+    if (!avio_buffer) return FALSE;
+
+    // 第三个参数 write_flag 应为 0（只读）
+    ioctx = avio_alloc_context(avio_buffer, 4096, 0, &bd, &read_packet, NULL, &seek);
+    if (!ioctx) return FALSE;
+    fmtctx->pb = ioctx;
+
+    int ret = avformat_open_input(&fmtctx, NULL, NULL, NULL);
+    if (ret < 0) {
+        // 处理错误并释放资源
+        return FALSE;
+    }
 	//查找解码器
 	avformat_find_stream_info(fmtctx, NULL);
 	for (int i = 0; i < fmtctx->nb_streams; i++)
 	{
-		const AVCodec* codec = avcodec_find_decoder(fmtCtx->streams[i]->codecpar->codec_id);
+		const AVCodec* codec = avcodec_find_decoder(fmtctx->streams[i]->codecpar->codec_id);
 		if (codec->type == AVMEDIA_TYPE_VIDEO)
 		{
 			VideoStreamIndex = i;
@@ -80,7 +115,7 @@ BOOL HostViewDisplay::OnScreenDisplay(HDC hdc)
 	bitinfo.bmiHeader.biCompression = BI_RGB;
 
 	SelectObject(hdcMem, hBitmap);
-	SetDIBits(hdcMem, hBitmap, 0, ViewHeight, data->data(), &bitinfo, DIB_RGB_COLORS);
+	SetDIBits(hdcMem, hBitmap, 0, ViewHeight, ViewData.data(), &bitinfo, DIB_RGB_COLORS);
 	BitBlt(hdc, 0, 0, ViewWidth, ViewHeight, hdcMem, 0, 0, SRCCOPY);
 
 	DeleteObject(hBitmap);
@@ -88,7 +123,7 @@ BOOL HostViewDisplay::OnScreenDisplay(HDC hdc)
 	return TRUE;
 }
 
-int HostViewDiaplay::read_packet(void* opaque, uint8_t* buf, int buf_size)
+int HostViewDisplay::read_packet(void* opaque, uint8_t* buf, int buf_size)
 {
 	bdata* bd = (bdata*)opaque;
 	size_t remaining = bd->size - bd->pos;
@@ -98,7 +133,7 @@ int HostViewDiaplay::read_packet(void* opaque, uint8_t* buf, int buf_size)
 	return to_read;
 }
 
-int64_t HostViewDiaplay::seek(void* opaque, int64_t offset, int whence)
+int64_t HostViewDisplay::seek(void* opaque, int64_t offset, int whence)
 {
 	bdata* bd = (bdata*)opaque;
 	switch (whence) {
@@ -127,29 +162,44 @@ double HostViewDisplay::GetFrameRate()
 
 BOOL HostViewDisplay::RequestFrame()
 {
+    if (!fmtctx || !c) return FALSE;
 	while (TRUE)
 	{
-		pkt = av_packet_alloc();
-		int ret = av_read_frame(fmtctx, pkt);
-		if (ret == 0 && pkt->stream_index == VideoStreamIndex)
-			ret = avcodec_send_packet(c, pkt);
+		AVPacket* localPkt = av_packet_alloc();
+		if (!localPkt) return FALSE;
+		int ret = av_read_frame(fmtctx, localPkt);
+		if (ret == 0 && localPkt->stream_index == VideoStreamIndex)
+			ret = avcodec_send_packet(c, localPkt);
 		else if (ret == AVERROR_EOF)
 			ret = avcodec_send_packet(c, NULL);
 
-		frame = av_frame_alloc();
-		if (ret == 0)
+		if (ret != 0)
 		{
-			ret = avcodec_receive_frame(c, frame);
-		}
-		else
-		{
-			av_packet_unref(pkt);
+			av_packet_unref(localPkt);
+			av_packet_free(&localPkt);
 			continue;
 		}
 
+		if (frame)
+		{
+			av_frame_free(&frame);
+			frame = nullptr;
+		}
+		frame = av_frame_alloc();
+		if (!frame)
+		{
+			av_packet_unref(localPkt);
+			av_packet_free(&localPkt);
+			return FALSE;
+		}
+
+		ret = avcodec_receive_frame(c, frame);
+
+		av_packet_unref(localPkt);
+		av_packet_free(&localPkt);
+
 		if (ret == 0)
 		{
-			av_packet_unref(pkt);
 			return TRUE;
 		}
 		else if (ret == AVERROR_EOF)
@@ -158,13 +208,15 @@ BOOL HostViewDisplay::RequestFrame()
 			return FALSE;
 		}
 
-		av_packet_unref(pkt);
 		av_frame_unref(frame);
+		av_frame_free(&frame);
+		frame = nullptr;
 	}
 }
 
 BOOL HostViewDisplay::GetFrameData()
 {
+    if (!sws_ctx || !frame) return FALSE;
 	uint8_t* data[AV_NUM_DATA_POINTERS] = { ViewData.data() };
 	int linesize[AV_NUM_DATA_POINTERS] = { 0 };
 	av_image_fill_linesizes(linesize, AV_PIX_FMT_BGR24, ViewWidth);
