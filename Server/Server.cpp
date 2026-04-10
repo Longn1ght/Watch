@@ -95,31 +95,13 @@ DWORD WINAPI NetworkThread(LPVOID lpParam)
 		MessageBox(nullptr, L"接收数据失败！", L"错误", MB_OK | MB_ICONERROR);
 		return -1;
 	}
-
-	const int serverTargetFrame = 30;
-	size_t expectedSize = (size_t)header.biWidth * header.biHeight * serverTargetFrame * sizeof(Color_RGB);
-	uint8_t* videoBuf = (uint8_t*)VirtualAlloc(NULL, expectedSize, MEM_COMMIT, PAGE_READWRITE);
-	if (!videoBuf) 
-	{
-		MessageBox(nullptr, L"内存分配失败！", L"错误", MB_OK | MB_ICONERROR);
-		return -1;
-	}
-	memcpy(videoBuf, &header, sizeof(header));
-
-	if (!nm.RecvNetFrameMessage(MESSAGE_TYPE::Video, videoBuf + sizeof(header)))
-	{
-		MessageBox(nullptr, L"接收数据失败！", L"错误", MB_OK | MB_ICONERROR);
-		VirtualFree(videoBuf, 0, MEM_RELEASE);
-		return -1;
-	}
-
-	pHvd->SetVideoBuffer(videoBuf, expectedSize);
-	SetEvent(g_GotVideoInfoEvent); // 触发获取视频信息事件
+	pHvd->SetBmpInfo(header);
+	SetEvent(g_GotVideoInfoEvent);
 
 	while (true)
 	{
 		WaitForSingleObject(g_PlayEndedEvent, INFINITE);
-		if (!nm.RecvNetFrameMessage(MESSAGE_TYPE::Video, pHvd->lpMemVideoFile + sizeof(BITMAPINFOHEADER)))
+		if (!nm.RecvNetFrameMessage(MESSAGE_TYPE::Video, pHvd->lpMemVideoFile))
 		{
 			MessageBox(nullptr, L"接收数据失败！", L"错误", MB_OK | MB_ICONERROR);
 			break;

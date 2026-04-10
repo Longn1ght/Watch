@@ -11,17 +11,9 @@ HostViewDisplay::HostViewDisplay()
 	lpMemVideoFile = (uint8_t*)VirtualAlloc(NULL, sizeof(BITMAPINFOHEADER), MEM_COMMIT, PAGE_READWRITE);
 }
 
-void HostViewDisplay::SetVideoBuffer(uint8_t* buf, size_t size)
+VOID HostViewDisplay::SetBmpInfo(BITMAPINFOHEADER bmpInfo)
 {
-	// Replace owned buffer safely
-	if (lpMemVideoFile)
-	{
-		VirtualFree(lpMemVideoFile, 0, MEM_RELEASE);
-	}
-	lpMemVideoFile = buf;
-	bd.buf = lpMemVideoFile;
-	bd.size = size;
-	bd.pos = 0;
+	BmpInfo = bmpInfo;
 }
 
 HostViewDisplay::~HostViewDisplay()
@@ -52,8 +44,6 @@ BOOL HostViewDisplay::Initialize()
     ViewData.resize(ViewWidth * ViewHeight * 3); // 24bpp -> 3 bytes per pixel
 	if (!lpMemVideoFile) return FALSE; // 空检查
 
-    // 读取位图头信息（确保网络线程已填充并设置事件）
-    BmpInfo = *reinterpret_cast<BITMAPINFOHEADER*>(lpMemVideoFile);
     // 每帧为 width * height * sizeof(Color_RGB) 字节（Color_RGB == 3 bytes），总大小乘以每秒帧数 targetframe
 	bd.size = (size_t)BmpInfo.biWidth * BmpInfo.biHeight * targetframe * sizeof(Color_RGB);
 
@@ -98,6 +88,7 @@ BOOL HostViewDisplay::Initialize()
 
 	sws_ctx = sws_getContext(c->width, c->height, c->pix_fmt, ViewWidth, ViewHeight,
 		AV_PIX_FMT_BGR24, SWS_BILINEAR, NULL, NULL, NULL);
+	SetEvent(g_PlayEndedEvent);
 	return TRUE;
 }
 

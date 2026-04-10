@@ -143,7 +143,7 @@ public:
 	BOOL OnScreenDisplay(HDC hdc);
 	double GetFrameRate();
 
-	void SetVideoBuffer(uint8_t* buf, size_t size);
+	VOID SetBmpInfo(BITMAPINFOHEADER bmpInfo);
 
 	static int read_packet(void* opaque, uint8_t* buf, int buf_size);
 	static int64_t seek(void* opaque, int64_t offset, int whence);

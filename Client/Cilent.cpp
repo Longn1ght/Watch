@@ -3,7 +3,7 @@
 DWORD WINAPI NetworkThread(LPVOID lpParam);
 int main()
 {
-	g_ReadyEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+	g_ReadyEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 	ClientViewCatch cvc;
 	if (!cvc.Initialize())
 	{
@@ -26,7 +26,7 @@ DWORD WINAPI NetworkThread(LPVOID lpParam)
 	static ClientViewCatch* cvc = static_cast<ClientViewCatch*>(lpParam);
 	static NetworkModule nm(IDENTITY::CLIENT);
 	//首次需要发送视频信息，后续只发送视频数据
-	if (!nm.SendNetFrameMessage(Info, cvc->GetBmpInfo()))
+	if (!nm.SendNetFrameMessage(Info, cvc->GetBmpInfo(),sizeof(BITMAPINFOHEADER)))
 	{
 		MessageBox(nullptr, L"发送数据失败！", L"错误", MB_OK | MB_ICONERROR);
 		return -1;
@@ -34,7 +34,7 @@ DWORD WINAPI NetworkThread(LPVOID lpParam)
 	while (true)
 	{
 		WaitForSingleObject(g_ReadyEvent, INFINITE); // 等待捕获事件
-		if (!nm.SendNetFrameMessage(MESSAGE_TYPE::Video, cvc->lpMemVideoFile))
+		if (!nm.SendNetFrameMessage(MESSAGE_TYPE::Video, cvc->lpMemVideoFile,cvc->GetMemVideoFileSize()))
 		{
 			MessageBox(nullptr, L"发送数据失败！", L"错误", MB_OK | MB_ICONERROR);
 			break;

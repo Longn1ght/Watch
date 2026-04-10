@@ -4,8 +4,8 @@
 ClientViewCatch::ClientViewCatch()
 {
     BmpInfo.biSize = sizeof(BITMAPINFOHEADER);
-	BmpInfo.biWidth = GetSystemMetrics(SM_CXSCREEN);
-	BmpInfo.biHeight = GetSystemMetrics(SM_CYSCREEN);
+	BmpInfo.biWidth = GetSystemMetricsForDpi(SM_CXSCREEN,GetDpiForSystem());
+	BmpInfo.biHeight = GetSystemMetricsForDpi(SM_CYSCREEN, GetDpiForSystem());
 	BmpInfo.biPlanes = 1;
 	BmpInfo.biBitCount = 24;
 	BmpInfo.biCompression = BI_RGB;
@@ -259,7 +259,7 @@ DWORD WINAPI ClientViewCatch::CaptureThread(LPVOID lpParam)
 	while (pThis->bRunning)
 	{
 		WaitForSingleObject(pThis->hCaptureEvent, INFINITE); // 等待信号
-		for (int f = 0; f < 30; f++) 
+		for (pThis->frame_index = 0; pThis->frame_index < 30; pThis->frame_index++) 
 		{
 			pThis->OnScreenShots();      // 捕获一帧
 			Sleep(pThis->framerate * 1000);       // 控制帧率，实际应该用更精确的计时
@@ -285,7 +285,7 @@ VOID ClientViewCatch::StartStopCapture()
 	else 
 	{
 		bRunning = TRUE;
-		hCaptureEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+		hCaptureEvent = CreateEvent(NULL, TRUE, TRUE, NULL);
 		hThread = CreateThread(NULL, 0, CaptureThread, this, 0, NULL);
 	}
 }
